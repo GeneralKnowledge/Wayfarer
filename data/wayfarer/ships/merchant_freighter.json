@@ -1,0 +1,15 @@
+{
+  "key": "merchant_freighter",
+  "name": "Merchant Freighter",
+  "role": "trader",
+  "mass": 220,
+  "cargo_capacity": 40,
+  "fuel_capacity": 30,
+  "engine_power": 1.2,
+  "shield_strength": 150,
+  "weapon_power": 0.2,
+  "hull_strength": 320,
+  "crew_capacity": 4,
+  "outfit_capacity": 24,
+  "pioneer_model": "lodos"
+}

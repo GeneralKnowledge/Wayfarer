@@ -1,0 +1,53 @@
+{
+  "system": "New Albion",
+  "locations": [
+    {
+      "key": "mining_world",
+      "name": "Mining World",
+      "kind": "planet",
+      "pioneer_body_id": "new_albion/mining_world",
+      "faction": "mining_union",
+      "economy": {
+        "population": 120000,
+        "wealth": 0.8,
+        "government": "syndicate",
+        "industries": [{ "key": "mining", "intensity": 1.2 }],
+        "resources": ["ore", "metal"],
+        "exports": ["ore", "metal"],
+        "imports": ["machinery", "electronics", "food"]
+      }
+    },
+    {
+      "key": "industrial_world",
+      "name": "Industrial World",
+      "kind": "planet",
+      "pioneer_body_id": "new_albion/industrial_world",
+      "faction": "federation",
+      "economy": {
+        "population": 850000,
+        "wealth": 1.3,
+        "government": "representative_democracy",
+        "industries": [{ "key": "industrial", "intensity": 1.4 }],
+        "resources": ["machinery", "electronics"],
+        "exports": ["machinery", "electronics"],
+        "imports": ["ore", "metal", "fuel"]
+      }
+    },
+    {
+      "key": "frontier_station",
+      "name": "Frontier Station",
+      "kind": "station",
+      "pioneer_body_id": "new_albion/frontier_station",
+      "faction": "frontier_league",
+      "economy": {
+        "population": 18000,
+        "wealth": 0.9,
+        "government": "confederation",
+        "industries": [],
+        "resources": [],
+        "exports": ["fuel"],
+        "imports": ["electronics", "food", "machinery"]
+      }
+    }
+  ]
+}

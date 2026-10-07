@@ -1,0 +1,21 @@
+# Build trees
+**/build/
+**/cmake-build-*/
+*.o
+*.a
+*.so
+*.dylib
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Large upstream trees (clone locally; see README)
+vendor/pioneer/
+vendor/endless-sky/
+
+# Logs / temp
+*.log
+/tmp/

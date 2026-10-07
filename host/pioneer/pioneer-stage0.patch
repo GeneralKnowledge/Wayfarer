@@ -1,0 +1,756 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 5f43ea7..7e273ac 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -151,6 +151,7 @@ endif (REMOTE_LUA_REPL)
+ 
+ list(APPEND SRC_FOLDERS
+ 	src/
++	src/wayfarer
+ 	src/collider
+ 	src/galaxy
+ 	src/graphics
+@@ -328,6 +329,17 @@ add_subdirectory(src/core)
+ define_pioneer_library(pioneer-lib PIONEER_CXX_FILES PIONEER_HXX_FILES)
+ target_link_libraries(pioneer-lib PUBLIC pioneer-core)
+ 
++# --- Wayfarer Stage 0 simulation (headless economy / traders / contracts) ---
++set(WAYFARER_SIM_DIR "/workspace/simulation" CACHE PATH "Wayfarer simulation library")
++if (EXISTS "${WAYFARER_SIM_DIR}/CMakeLists.txt")
++	add_subdirectory(${WAYFARER_SIM_DIR} ${CMAKE_BINARY_DIR}/wayfarer_sim_ext EXCLUDE_FROM_ALL)
++	target_link_libraries(pioneer-lib PUBLIC wayfarer_sim)
++	message(STATUS "Wayfarer simulation enabled: ${WAYFARER_SIM_DIR}")
++else()
++	message(WARNING "Wayfarer simulation not found at ${WAYFARER_SIM_DIR}")
++endif()
++
++
+ add_subdirectory(src/lua)
+ 
+ if (WIN32)
+diff --git a/data/modules/Wayfarer/Stage0.lua b/data/modules/Wayfarer/Stage0.lua
+new file mode 100644
+index 0000000..bcf7c68
+--- /dev/null
++++ b/data/modules/Wayfarer/Stage0.lua
+@@ -0,0 +1,163 @@
++-- Copyright © 2026 Wayfarer Contributors.
++-- SPDX-License-Identifier: GPL-3.0-or-later
++--
++-- Stage 0 vertical slice glue:
++--   * starts the headless Wayfarer simulation
++--   * spawns a visible Pioneer NPC freighter
++--   * steers it with Pioneer AI as the sim trader travels
++--   * keeps player flight controls unchanged
++
++local Event = require 'Event'
++local Game = require 'Game'
++local Space = require 'Space'
++local Timer = require 'Timer'
++local Wayfarer = require 'Wayfarer'
++
++local npcShip = nil
++local lastStatus = nil
++local bodyHints = {
++	mining_world = nil,
++	industrial_world = nil,
++	frontier_station = nil,
++}
++
++local function pickBodies()
++	bodyHints.mining_world = nil
++	bodyHints.industrial_world = nil
++	bodyHints.frontier_station = nil
++
++	local stations = {}
++	local planets = {}
++	for i = 1, #Space.GetBodies() do
++		local b = Space.GetBodies()[i]
++		local t = b.superType or b.type
++		-- Body type checks vary; prefer stations then rocky worlds.
++		if b.docking or (b.type and tostring(b.type):find("STARPORT")) then
++			stations[#stations + 1] = b
++		elseif b.type and (tostring(b.type):find("PLANET") or tostring(b.type):find("WORLD")) then
++			planets[#planets + 1] = b
++		end
++	end
++
++	-- Fallbacks using GetBodies around player.
++	if #stations == 0 or #planets == 0 then
++		for _, b in pairs(Space.GetBodies()) do
++			if b ~= Game.player then
++				if not bodyHints.mining_world then
++					bodyHints.mining_world = b
++				elseif not bodyHints.industrial_world then
++					bodyHints.industrial_world = b
++				elseif not bodyHints.frontier_station then
++					bodyHints.frontier_station = b
++				end
++			end
++		end
++		return
++	end
++
++	bodyHints.mining_world = planets[1] or stations[1]
++	bodyHints.industrial_world = planets[2] or stations[1]
++	bodyHints.frontier_station = stations[1] or planets[1]
++end
++
++local function spawnNpc()
++	if npcShip and npcShip:exists() then
++		return
++	end
++	pickBodies()
++	local near = bodyHints.mining_world or Game.player
++	-- Pioneer freighter model used as visual stand-in for Wayfarer merchant hull.
++	local ok, ship = pcall(function()
++		return Space.SpawnShipNear("lodos", near, 50, 80)
++	end)
++	if not ok or not ship then
++		ok, ship = pcall(function()
++			return Space.SpawnShipNear("kanara", near, 50, 80)
++		end)
++	end
++	if ok and ship then
++		npcShip = ship
++		ship:SetLabel("TSV Merchant")
++		print("Wayfarer: spawned NPC trader " .. tostring(ship.label))
++	else
++		print("Wayfarer: failed to spawn NPC ship")
++	end
++end
++
++local function steerNpc()
++	if not Wayfarer or not Wayfarer.IsActive() or not npcShip or not npcShip:exists() then
++		return
++	end
++	if Wayfarer.NpcCount() < 1 then
++		return
++	end
++
++	local status = Wayfarer.NpcStatus(0)
++	local destName = Wayfarer.NpcDestination(0)
++	if status ~= lastStatus then
++		print(string.format("Wayfarer NPC: %s -> %s (%s)", Wayfarer.NpcName(0), tostring(destName), status))
++		lastStatus = status
++	end
++
++	if status == "In Transit" then
++		pickBodies()
++		local target = nil
++		if destName == "Industrial World" then
++			target = bodyHints.industrial_world
++		elseif destName == "Mining World" then
++			target = bodyHints.mining_world
++		elseif destName == "Frontier Station" then
++			target = bodyHints.frontier_station
++		end
++		target = target or bodyHints.industrial_world or Game.player
++		pcall(function()
++			npcShip:AIFlyTo(target)
++		end)
++	end
++end
++
++local function onGameStart()
++	if not Wayfarer then
++		print("Wayfarer: Lua API not registered")
++		return
++	end
++	Wayfarer.StartStage0()
++	print("Wayfarer Stage 0 simulation started")
++	Timer:CallAt(Game.time + 2, function()
++		spawnNpc()
++	end)
++	Timer:CallEvery(2, function()
++		if not Game.player then
++			return false
++		end
++		steerNpc()
++		return true
++	end)
++end
++
++local function onGameEnd()
++	if Wayfarer then
++		Wayfarer.Shutdown()
++	end
++	npcShip = nil
++	lastStatus = nil
++end
++
++local function onShipDocked(ship, station)
++	if ship ~= Game.player then
++		return
++	end
++	if not Wayfarer or not Wayfarer.IsActive() then
++		return
++	end
++	-- Map docking to frontier delivery when a contract is accepted.
++	Wayfarer.PlayerTravelTo("frontier_station")
++	local ok = Wayfarer.DeliverContract()
++	if ok then
++		print("Wayfarer: docked delivery complete")
++	end
++end
++
++Event.Register("onGameStart", onGameStart)
++Event.Register("onGameEnd", onGameEnd)
++Event.Register("onShipDocked", onShipDocked)
+diff --git a/data/pigui/modules/wayfarer-economy-panel.lua b/data/pigui/modules/wayfarer-economy-panel.lua
+new file mode 100644
+index 0000000..41c9f3a
+--- /dev/null
++++ b/data/pigui/modules/wayfarer-economy-panel.lua
+@@ -0,0 +1,47 @@
++-- Copyright © 2026 Wayfarer Contributors.
++-- SPDX-License-Identifier: GPL-3.0-or-later
++-- Stage 0 development/debug economy panel.
++
++local Game = require 'Game'
++local ui = require 'pigui'
++local Wayfarer = require 'Wayfarer'
++
++local Vector2 = _G.Vector2
++
++local windowFlags = ui.WindowFlags { "NoSavedSettings" }
++
++local function drawPanel()
++	if not Wayfarer or not Wayfarer.IsActive() then
++		return
++	end
++	if not Game.player then
++		return
++	end
++
++	ui.setNextWindowSize(Vector2(560, 580), "FirstUseEver")
++	ui.setNextWindowPos(Vector2(20, 80), "FirstUseEver")
++	ui.window("Wayfarer Economy (Stage 0)", windowFlags, function()
++		-- ImGui text wraps poorly with huge blobs; show line-by-line.
++		local panel = Wayfarer.DebugPanel() or ""
++		for line in string.gmatch(panel .. "\n", "(.-)\n") do
++			ui.text(line)
++		end
++		ui.separator()
++		if ui.button("Accept Contract", Vector2(160, 0)) then
++			local ok = Wayfarer.AcceptContract()
++			print(ok and "Wayfarer: contract accepted" or "Wayfarer: accept failed")
++		end
++		ui.sameLine()
++		if ui.button("Deliver Contract", Vector2(160, 0)) then
++			local ok = Wayfarer.DeliverContract()
++			print(ok and "Wayfarer: contract delivered" or "Wayfarer: deliver failed")
++		end
++		ui.sameLine()
++		if ui.button("Travel: Frontier", Vector2(160, 0)) then
++			Wayfarer.PlayerTravelTo("frontier_station")
++			print("Wayfarer: player sim location -> Frontier Station")
++		end
++	end)
++end
++
++ui.registerModule("game", { id = "wayfarer-economy-panel", draw = drawPanel })
+diff --git a/src/CityOnPlanet.cpp b/src/CityOnPlanet.cpp
+index 3b4ee5f..07a6cde 100644
+--- a/src/CityOnPlanet.cpp
++++ b/src/CityOnPlanet.cpp
+@@ -32,6 +32,8 @@
+ 
+ #include "utils.h"
+ 
++#include <cstdlib>
++
+ std::vector<CityOnPlanet::CityFlavourType> CityOnPlanet::s_cityFlavours;
+ std::unique_ptr<Graphics::Material> CityOnPlanet::s_debugMat;
+ 
+@@ -256,6 +258,14 @@ void CityOnPlanet::Init()
+ {
+ 	PROFILE_SCOPED()
+ 
++	// Wayfarer / headless-friendly: DetailCities=0 skips building model uploads.
++	// Under software GL (llvmpipe) Assimp texture uploads can SIGSEGV in Mesa;
++	// cities are not required for the Stage 0 economy/NPC flight slice.
++	if (std::getenv("WAYFARER_SKIP_CITIES") && std::getenv("WAYFARER_SKIP_CITIES")[0] == '1') {
++		Log::Info("CityOnPlanet: WAYFARER_SKIP_CITIES=1 - skipping city building model load");
++		return;
++	}
++
+ 	// Load all city definition configs
+ 	FileSystem::FileEnumerator iter(FileSystem::gameDataFiles, "configs/buildings/");
+ 	for (; !iter.Finished(); iter.Next()) {
+diff --git a/src/Game.cpp b/src/Game.cpp
+index d64739d..f695ef5 100644
+--- a/src/Game.cpp
++++ b/src/Game.cpp
+@@ -31,6 +31,7 @@
+ #include "SpaceStation.h"
+ #include "SystemView.h"
+ #include "WorldView.h"
++#include "wayfarer/WayfarerHost.h"
+ #include "galaxy/GalaxyGenerator.h"
+ #include "ship/PlayerShipController.h"
+ 
+@@ -356,6 +357,10 @@ void Game::TimeStep(float step)
+ 
+ 	m_space->TimeStep(step);
+ 
++	if (wayfarer::WayfarerHost::Get().IsActive()) {
++		wayfarer::WayfarerHost::Get().OnGameTimeStep(step);
++	}
++
+ 	SfxManager::TimeStepAll(step, m_space->GetRootFrame());
+ 
+ 	if (m_state == State::HYPERSPACE) {
+diff --git a/src/graphics/opengl/TextureGL.cpp b/src/graphics/opengl/TextureGL.cpp
+index 9ad361d..6ceb673 100644
+--- a/src/graphics/opengl/TextureGL.cpp
++++ b/src/graphics/opengl/TextureGL.cpp
+@@ -6,6 +6,7 @@
+ #include "graphics/Renderer.h"
+ #include "utils.h"
+ #include <cassert>
++#include <cstdlib>
+ 
+ namespace Graphics {
+ 	namespace OGL {
+@@ -323,6 +324,18 @@ namespace Graphics {
+ 				if (!IsCompressed(format)) {
+ 					glTexSubImage2D(m_target, 0, pos.x, pos.y, dataSize.x, dataSize.y, GLImageFormat(format), GLImageType(format), data);
+ 				} else {
++					// Wayfarer Stage 0: Mesa llvmpipe can SIGSEGV inside
++					// glCompressedTexSubImage2D for DDS/DXT uploads. Skip pixel
++					// upload so Pioneer can still boot for economy/NPC demos.
++					const char *soft = std::getenv("WAYFARER_SOFT_GL");
++					if (soft && soft[0] == '1') {
++						glBindTexture(m_target, 0);
++						return;
++					}
++					if (!data) {
++						glBindTexture(m_target, 0);
++						return;
++					}
+ 					const GLint oglInternalFormat = GLImageFormat(format);
+ 					size_t Offset = 0;
+ 					size_t Width = dataSize.x;
+diff --git a/src/lua/Lua.cpp b/src/lua/Lua.cpp
+index 542a3b8..4e7c800 100644
+--- a/src/lua/Lua.cpp
++++ b/src/lua/Lua.cpp
+@@ -8,6 +8,7 @@
+ #include "LuaConstants.h"
+ #include "LuaDev.h"
+ #include "LuaEconomy.h"
++#include "LuaWayfarer.h"
+ #include "LuaEngine.h"
+ #include "LuaEvent.h"
+ #include "LuaFileSystem.h"
+@@ -110,6 +111,7 @@ namespace Lua {
+ 		LuaConstants::Register(Lua::manager->GetLuaState());
+ 		LuaLang::Register();
+ 		LuaEconomy::Register();
++		LuaWayfarer::Register();
+ 		LuaInput::Register();
+ 		LuaFileSystem::Register();
+ 		LuaJson::Register();
+diff --git a/src/lua/LuaWayfarer.cpp b/src/lua/LuaWayfarer.cpp
+new file mode 100644
+index 0000000..a90e501
+--- /dev/null
++++ b/src/lua/LuaWayfarer.cpp
+@@ -0,0 +1,129 @@
++// Copyright © 2026 Wayfarer Contributors.
++// SPDX-License-Identifier: GPL-3.0-or-later
++
++#include "LuaWayfarer.h"
++
++#include "Lua.h"
++#include "LuaUtils.h"
++#include "wayfarer/WayfarerHost.h"
++
++static int l_wayfarer_start_stage0(lua_State *l)
++{
++	wayfarer::WayfarerHost::Get().StartStage0();
++	lua_pushboolean(l, 1);
++	return 1;
++}
++
++static int l_wayfarer_shutdown(lua_State *l)
++{
++	wayfarer::WayfarerHost::Get().Shutdown();
++	return 0;
++}
++
++static int l_wayfarer_is_active(lua_State *l)
++{
++	lua_pushboolean(l, wayfarer::WayfarerHost::Get().IsActive());
++	return 1;
++}
++
++static int l_wayfarer_debug_panel(lua_State *l)
++{
++	const std::string text = wayfarer::WayfarerHost::Get().DebugPanelText();
++	lua_pushlstring(l, text.data(), text.size());
++	return 1;
++}
++
++static int l_wayfarer_accept_contract(lua_State *l)
++{
++	lua_pushboolean(l, wayfarer::WayfarerHost::Get().AcceptCurrentContract());
++	return 1;
++}
++
++static int l_wayfarer_deliver_contract(lua_State *l)
++{
++	lua_pushboolean(l, wayfarer::WayfarerHost::Get().DeliverCurrentContract());
++	return 1;
++}
++
++static int l_wayfarer_player_travel_to(lua_State *l)
++{
++	const char *key = luaL_checkstring(l, 1);
++	lua_pushboolean(l, wayfarer::WayfarerHost::Get().PlayerTravelTo(key));
++	return 1;
++}
++
++static int l_wayfarer_npc_count(lua_State *l)
++{
++	lua_pushinteger(l, wayfarer::WayfarerHost::Get().NpcCount());
++	return 1;
++}
++
++static int l_wayfarer_npc_name(lua_State *l)
++{
++	const int index = luaL_checkinteger(l, 1);
++	const std::string s = wayfarer::WayfarerHost::Get().NpcName(index);
++	lua_pushlstring(l, s.data(), s.size());
++	return 1;
++}
++
++static int l_wayfarer_npc_status(lua_State *l)
++{
++	const int index = luaL_checkinteger(l, 1);
++	const std::string s = wayfarer::WayfarerHost::Get().NpcStatus(index);
++	lua_pushlstring(l, s.data(), s.size());
++	return 1;
++}
++
++static int l_wayfarer_npc_destination(lua_State *l)
++{
++	const int index = luaL_checkinteger(l, 1);
++	const std::string s = wayfarer::WayfarerHost::Get().NpcDestinationName(index);
++	lua_pushlstring(l, s.data(), s.size());
++	return 1;
++}
++
++static int l_wayfarer_npc_progress(lua_State *l)
++{
++	const int index = luaL_checkinteger(l, 1);
++	lua_pushnumber(l, wayfarer::WayfarerHost::Get().NpcProgress(index));
++	return 1;
++}
++
++static int l_wayfarer_npc_cargo(lua_State *l)
++{
++	const int index = luaL_checkinteger(l, 1);
++	const std::string s = wayfarer::WayfarerHost::Get().NpcCargoSummary(index);
++	lua_pushlstring(l, s.data(), s.size());
++	return 1;
++}
++
++void LuaWayfarer::Register()
++{
++	lua_State *l = Lua::manager->GetLuaState();
++
++	LUA_DEBUG_START(l);
++
++	static const luaL_Reg methods[] = {
++		{ "StartStage0", l_wayfarer_start_stage0 },
++		{ "Shutdown", l_wayfarer_shutdown },
++		{ "IsActive", l_wayfarer_is_active },
++		{ "DebugPanel", l_wayfarer_debug_panel },
++		{ "AcceptContract", l_wayfarer_accept_contract },
++		{ "DeliverContract", l_wayfarer_deliver_contract },
++		{ "PlayerTravelTo", l_wayfarer_player_travel_to },
++		{ "NpcCount", l_wayfarer_npc_count },
++		{ "NpcName", l_wayfarer_npc_name },
++		{ "NpcStatus", l_wayfarer_npc_status },
++		{ "NpcDestination", l_wayfarer_npc_destination },
++		{ "NpcProgress", l_wayfarer_npc_progress },
++		{ "NpcCargo", l_wayfarer_npc_cargo },
++		{ nullptr, nullptr }
++	};
++
++	lua_getfield(l, LUA_REGISTRYINDEX, "CoreImports");
++	luaL_newlib(l, methods);
++	lua_setfield(l, -2, "Wayfarer");
++	lua_pop(l, 1);
++
++	LUA_DEBUG_END(l, 0);
++}
+diff --git a/src/lua/LuaWayfarer.h b/src/lua/LuaWayfarer.h
+new file mode 100644
+index 0000000..edc1eda
+--- /dev/null
++++ b/src/lua/LuaWayfarer.h
+@@ -0,0 +1,8 @@
++// Copyright © 2026 Wayfarer Contributors.
++// SPDX-License-Identifier: GPL-3.0-or-later
++
++#pragma once
++
++namespace LuaWayfarer {
++	void Register();
++}
+diff --git a/src/wayfarer/WayfarerHost.cpp b/src/wayfarer/WayfarerHost.cpp
+new file mode 100644
+index 0000000..bc8ae5c
+--- /dev/null
++++ b/src/wayfarer/WayfarerHost.cpp
+@@ -0,0 +1,187 @@
++// Copyright © 2026 Wayfarer Contributors.
++// SPDX-License-Identifier: GPL-3.0-or-later
++
++#include "WayfarerHost.h"
++
++namespace wayfarer {
++
++WayfarerHost &WayfarerHost::Get()
++{
++	static WayfarerHost host;
++	return host;
++}
++
++void WayfarerHost::StartStage0()
++{
++	m_sim = std::make_unique<sim::WorldSimulation>(sim::SimulationConfig{ 2026, 77, 1.0 });
++	m_sim->BootstrapStage0Demo();
++	m_adapter = sim::PioneerWorldAdapter{};
++	for (const auto &loc : m_sim->GetLocations()) {
++		m_adapter.BindLocation(loc.id, loc.pioneer_system, loc.pioneer_body_id);
++	}
++	for (const auto &ship : m_sim->GetShips()) {
++		m_adapter.BindShip(ship.id, ship.is_player ? "player" : ship.name);
++	}
++	m_accum = 0.0;
++	m_active = true;
++}
++
++void WayfarerHost::Shutdown()
++{
++	m_active = false;
++	m_sim.reset();
++	m_adapter = sim::PioneerWorldAdapter{};
++	m_accum = 0.0;
++}
++
++void WayfarerHost::OnGameTimeStep(float step)
++{
++	if (!m_active || !m_sim) {
++		return;
++	}
++	// Map Pioneer seconds into discrete sim ticks (1 sim second each).
++	m_accum += static_cast<double>(step);
++	while (m_accum >= 1.0) {
++		m_sim->Tick();
++		m_accum -= 1.0;
++	}
++}
++
++std::string WayfarerHost::DebugPanelText() const
++{
++	if (!m_active || !m_sim) {
++		return "Wayfarer simulation inactive";
++	}
++	return m_sim->FormatDebugPanel();
++}
++
++bool WayfarerHost::AcceptCurrentContract()
++{
++	if (!m_active || !m_sim) {
++		return false;
++	}
++	auto *player = m_sim->GetPlayerShip();
++	if (!player || m_sim->GetContracts().empty()) {
++		return false;
++	}
++	auto &c = m_sim->GetContracts().front();
++	player->location = c.origin;
++	return m_sim->AcceptContract(c.id, player->id);
++}
++
++bool WayfarerHost::DeliverCurrentContract()
++{
++	if (!m_active || !m_sim) {
++		return false;
++	}
++	auto *player = m_sim->GetPlayerShip();
++	if (!player || m_sim->GetContracts().empty()) {
++		return false;
++	}
++	auto &c = m_sim->GetContracts().front();
++	player->location = c.destination;
++	return m_sim->DeliverContract(c.id, player->id);
++}
++
++bool WayfarerHost::PlayerTravelTo(const std::string &location_key)
++{
++	if (!m_active || !m_sim) {
++		return false;
++	}
++	auto *player = m_sim->GetPlayerShip();
++	auto *loc = m_sim->FindLocationByKey(location_key);
++	if (!player || !loc) {
++		return false;
++	}
++	player->location = loc->id;
++	return true;
++}
++
++int WayfarerHost::NpcCount() const
++{
++	if (!m_sim) {
++		return 0;
++	}
++	int n = 0;
++	for (const auto &s : m_sim->GetShips()) {
++		if (s.is_npc_trader) {
++			++n;
++		}
++	}
++	return n;
++}
++
++static const sim::SimShip *NpcAt(const sim::WorldSimulation &sim, int index)
++{
++	int n = 0;
++	for (const auto &s : sim.GetShips()) {
++		if (s.is_npc_trader) {
++			if (n == index) {
++				return &s;
++			}
++			++n;
++		}
++	}
++	return nullptr;
++}
++
++std::string WayfarerHost::NpcName(int index) const
++{
++	if (!m_sim) {
++		return {};
++	}
++	const auto *s = NpcAt(*m_sim, index);
++	return s ? s->name : std::string{};
++}
++
++std::string WayfarerHost::NpcStatus(int index) const
++{
++	if (!m_sim) {
++		return {};
++	}
++	const auto *s = NpcAt(*m_sim, index);
++	return s ? sim::ToString(s->status) : std::string{};
++}
++
++std::string WayfarerHost::NpcDestinationName(int index) const
++{
++	if (!m_sim) {
++		return {};
++	}
++	const auto *s = NpcAt(*m_sim, index);
++	if (!s || !s->destination) {
++		return {};
++	}
++	const auto *loc = m_sim->GetLocation(*s->destination);
++	return loc ? loc->name : std::string{};
++}
++
++double WayfarerHost::NpcProgress(int index) const
++{
++	if (!m_sim) {
++		return 0.0;
++	}
++	auto visuals = m_adapter.CollectNpcVisuals(*m_sim);
++	if (index < 0 || index >= static_cast<int>(visuals.size())) {
++		return 0.0;
++	}
++	return visuals[static_cast<size_t>(index)].progress;
++}
++
++std::string WayfarerHost::NpcCargoSummary(int index) const
++{
++	if (!m_sim) {
++		return {};
++	}
++	const auto *s = NpcAt(*m_sim, index);
++	if (!s || !s->active_trade) {
++		return {};
++	}
++	const auto *c = m_sim->Commodities().FindById(s->active_trade->commodity);
++	if (!c) {
++		return {};
++	}
++	return c->name + ": " + std::to_string(static_cast<int>(s->cargo.Quantity(c->id)));
++}
++
++} // namespace wayfarer
+diff --git a/src/wayfarer/WayfarerHost.h b/src/wayfarer/WayfarerHost.h
+new file mode 100644
+index 0000000..540e89f
+--- /dev/null
++++ b/src/wayfarer/WayfarerHost.h
+@@ -0,0 +1,54 @@
++// Copyright © 2026 Wayfarer Contributors.
++// SPDX-License-Identifier: GPL-3.0-or-later
++
++#pragma once
++
++#include "wayfarer/sim/PioneerWorldAdapter.hpp"
++#include "wayfarer/sim/WorldSimulation.hpp"
++
++#include <memory>
++#include <string>
++
++namespace wayfarer {
++
++/// Pioneer-side host for the headless WorldSimulation.
++/// Render/physics remain Pioneer's; this owns living economy/NPC/contract state.
++class WayfarerHost {
++public:
++	static WayfarerHost &Get();
++
++	void StartStage0();
++	void Shutdown();
++	bool IsActive() const { return m_active; }
++
++	/// Advance simulation from Pioneer game time (seconds).
++	void OnGameTimeStep(float step);
++
++	wayfarer::sim::WorldSimulation &Sim() { return *m_sim; }
++	const wayfarer::sim::WorldSimulation &Sim() const { return *m_sim; }
++	wayfarer::sim::PioneerWorldAdapter &Adapter() { return m_adapter; }
++
++	std::string DebugPanelText() const;
++
++	bool AcceptCurrentContract();
++	bool DeliverCurrentContract();
++	bool PlayerTravelTo(const std::string &location_key);
++
++	/// NPC visual helpers for Lua.
++	int NpcCount() const;
++	std::string NpcName(int index) const;
++	std::string NpcStatus(int index) const;
++	std::string NpcDestinationName(int index) const;
++	double NpcProgress(int index) const;
++	std::string NpcCargoSummary(int index) const;
++
++private:
++	WayfarerHost() = default;
++
++	bool m_active = false;
++	double m_accum = 0.0;
++	std::unique_ptr<wayfarer::sim::WorldSimulation> m_sim;
++	wayfarer::sim::PioneerWorldAdapter m_adapter;
++};
++
++} // namespace wayfarer

@@ -1,0 +1,11 @@
+{
+  "commodities": [
+    { "key": "food", "name": "Food", "role": "food", "base_price": 80, "mass_per_unit": 1.0 },
+    { "key": "ore", "name": "Ore", "role": "raw", "base_price": 100, "mass_per_unit": 1.0 },
+    { "key": "metal", "name": "Metal", "role": "refined", "base_price": 160, "mass_per_unit": 1.0 },
+    { "key": "fuel", "name": "Fuel", "role": "fuel", "base_price": 70, "mass_per_unit": 1.0 },
+    { "key": "machinery", "name": "Machinery", "role": "industrial", "base_price": 320, "mass_per_unit": 1.0 },
+    { "key": "electronics", "name": "Electronics", "role": "high_tech", "base_price": 480, "mass_per_unit": 1.0 },
+    { "key": "luxury_goods", "name": "Luxury Goods", "role": "luxury", "base_price": 600, "mass_per_unit": 1.0 }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "factions": [
+    {
+      "key": "federation",
+      "name": "Federation",
+      "government": "representative_democracy",
+      "colour": [0.2, 0.45, 0.9],
+      "economic_strength": 1.2,
+      "military_strength": 1.1,
+      "territory": ["industrial_world", "frontier_station"],
+      "starting_reputation": 20
+    },
+    {
+      "key": "mining_union",
+      "name": "Mining Union",
+      "government": "syndicate",
+      "colour": [0.75, 0.55, 0.15],
+      "economic_strength": 0.9,
+      "military_strength": 0.4,
+      "territory": ["mining_world"],
+      "starting_reputation": 5
+    },
+    {
+      "key": "pirates",
+      "name": "Pirates",
+      "government": "anarchy",
+      "colour": [0.7, 0.1, 0.1],
+      "economic_strength": 0.3,
+      "military_strength": 0.8,
+      "territory": [],
+      "starting_reputation": -40
+    },
+    {
+      "key": "frontier_league",
+      "name": "Frontier League",
+      "government": "confederation",
+      "colour": [0.3, 0.7, 0.4],
+      "economic_strength": 0.7,
+      "military_strength": 0.6,
+      "territory": ["frontier_station"],
+      "starting_reputation": 10
+    }
+  ]
+}
