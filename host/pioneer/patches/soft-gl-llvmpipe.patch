@@ -1,0 +1,59 @@
+diff --git a/src/CityOnPlanet.cpp b/src/CityOnPlanet.cpp
+index 3b4ee5f..07a6cde 100644
+--- a/src/CityOnPlanet.cpp
++++ b/src/CityOnPlanet.cpp
+@@ -32,6 +32,8 @@
+ 
+ #include "utils.h"
+ 
++#include <cstdlib>
++
+ std::vector<CityOnPlanet::CityFlavourType> CityOnPlanet::s_cityFlavours;
+ std::unique_ptr<Graphics::Material> CityOnPlanet::s_debugMat;
+ 
+@@ -256,6 +258,14 @@ void CityOnPlanet::Init()
+ {
+ 	PROFILE_SCOPED()
+ 
++	// Wayfarer / headless-friendly: DetailCities=0 skips building model uploads.
++	// Under software GL (llvmpipe) Assimp texture uploads can SIGSEGV in Mesa;
++	// cities are not required for the Stage 0 economy/NPC flight slice.
++	if (std::getenv("WAYFARER_SKIP_CITIES") && std::getenv("WAYFARER_SKIP_CITIES")[0] == '1') {
++		Log::Info("CityOnPlanet: WAYFARER_SKIP_CITIES=1 - skipping city building model load");
++		return;
++	}
++
+ 	// Load all city definition configs
+ 	FileSystem::FileEnumerator iter(FileSystem::gameDataFiles, "configs/buildings/");
+ 	for (; !iter.Finished(); iter.Next()) {
+diff --git a/src/graphics/opengl/TextureGL.cpp b/src/graphics/opengl/TextureGL.cpp
+index 9ad361d..6ceb673 100644
+--- a/src/graphics/opengl/TextureGL.cpp
++++ b/src/graphics/opengl/TextureGL.cpp
+@@ -6,6 +6,7 @@
+ #include "graphics/Renderer.h"
+ #include "utils.h"
+ #include <cassert>
++#include <cstdlib>
+ 
+ namespace Graphics {
+ 	namespace OGL {
+@@ -323,6 +324,18 @@ namespace Graphics {
+ 				if (!IsCompressed(format)) {
+ 					glTexSubImage2D(m_target, 0, pos.x, pos.y, dataSize.x, dataSize.y, GLImageFormat(format), GLImageType(format), data);
+ 				} else {
++					// Wayfarer Stage 0: Mesa llvmpipe can SIGSEGV inside
++					// glCompressedTexSubImage2D for DDS/DXT uploads. Skip pixel
++					// upload so Pioneer can still boot for economy/NPC demos.
++					const char *soft = std::getenv("WAYFARER_SOFT_GL");
++					if (soft && soft[0] == '1') {
++						glBindTexture(m_target, 0);
++						return;
++					}
++					if (!data) {
++						glBindTexture(m_target, 0);
++						return;
++					}
+ 					const GLint oglInternalFormat = GLImageFormat(format);
+ 					size_t Offset = 0;
+ 					size_t Width = dataSize.x;
