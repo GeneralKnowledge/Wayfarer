@@ -1,0 +1,11 @@
+{
+  "key": "basic_engine",
+  "name": "Basic Engine",
+  "category": "engine",
+  "mass": 8,
+  "outfit_space": 4,
+  "engine_power": 0.4,
+  "shield_strength": 0,
+  "weapon_power": 0,
+  "cargo_bonus": 0
+}
