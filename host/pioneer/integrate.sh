@@ -88,4 +88,14 @@ if "WayfarerHost" not in gt:
     print("Patched", game_cpp)
 PY
 
+# Optional soft-GL / llvmpipe workarounds (cities skip + skip broken DDS uploads)
+SOFT_GL_PATCH="$HOST/patches/soft-gl-llvmpipe.patch"
+if [[ -f "$SOFT_GL_PATCH" ]]; then
+  if ! grep -q 'WAYFARER_SKIP_CITIES' "$PIONEER/src/CityOnPlanet.cpp" 2>/dev/null; then
+    (cd "$PIONEER" && patch -p1 --forward < "$SOFT_GL_PATCH") || echo "Note: soft-GL patch may already be applied"
+  fi
+fi
+
 echo "Integration complete into $PIONEER"
+echo "For software GL (llvmpipe) CI/cloud environments, run Pioneer with:"
+echo "  WAYFARER_SKIP_CITIES=1 WAYFARER_SOFT_GL=1 DisableSound=1 ./pioneer -startat"

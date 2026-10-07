@@ -53,6 +53,16 @@ reputation, and determinism — without opening a renderer.
 Player flight controls remain Pioneer’s. The UI displays simulation state; it
 does not own it.
 
+### Software-GL / cloud notes
+
+Under Mesa llvmpipe, DDS/DXT texture uploads can SIGSEGV. After `integrate.sh`,
+use:
+
+```bash
+# config.ini: DisableSound=1, DetailCities=0
+WAYFARER_SKIP_CITIES=1 WAYFARER_SOFT_GL=1 ./pioneer -startat
+```
+
 ## Documentation
 
 - [Fusion architecture](docs/fusion-architecture.md)
